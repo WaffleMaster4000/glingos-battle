@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Glingos Battle</title>
+<style>
+:root{color-scheme:dark;--bg:#10151d;--panel:#1b2430;--line:#354253;--text:#f2f5f8;--muted:#aab7c5;--green:#35d06f;--red:#ff5365}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at top,#1e2b3b,#10151d 65%);color:var(--text);font:16px system-ui,sans-serif;min-height:100vh}
+main{max-width:1000px;margin:auto;padding:22px}h1{margin:0;font-size:clamp(2rem,6vw,3.3rem);letter-spacing:-.04em}h1 span{color:#8de9a9}.subtitle{color:var(--muted);margin:4px 0 20px}
+.panel{background:#1b2430eF;border:1px solid var(--line);border-radius:16px;padding:16px;margin:14px 0}
+label{display:block;font-size:.9rem;color:var(--muted);margin:8px 0 5px}input,button{font:inherit;border-radius:9px;border:1px solid var(--line);padding:10px 12px}input{width:100%;background:#101720;color:var(--text)}button{cursor:pointer;background:#2d3a4b;color:white;font-weight:650}button.primary{background:#217b43;border-color:#319a58}button:disabled{opacity:.5;cursor:not-allowed}.row{display:flex;gap:10px;align-items:end;flex-wrap:wrap}.field{flex:1;min-width:190px}.small{font-size:.85rem;color:var(--muted)}#status{margin-top:10px;color:#c9d7e5}#status.error{color:#ff9ca7}
+#arenaWrap{position:relative;overflow:hidden;border-radius:14px;border:2px solid #4b5d6e;background:#172b2b}
+canvas{display:block;width:100%;height:auto;image-rendering:pixelated}
+.hud{display:flex;justify-content:space-between;gap:12px;align-items:center;margin:10px 0;font-weight:700}.score{font-size:1.15rem}.en{color:#79ed9a}.um{color:#ff8794}
+.controls{display:flex;gap:12px;flex-wrap:wrap}.controls>div{flex:1;min-width:220px;background:#141c26;border:1px solid var(--line);border-radius:12px;padding:12px}
+kbd{display:inline-block;border:1px solid #64748b;border-bottom-width:3px;border-radius:5px;padding:1px 6px;background:#263342;font-size:.85rem}
+details summary{cursor:pointer;font-weight:700}code{overflow-wrap:anywhere;color:#b9e6ff}
+</style>
+</head>
+<body>
+<main>
+  <h1>Glingos <span>Battle</span></h1>
+  <p class="subtitle">Two Glingos. One arena. First to five points.</p>
+  <section class="panel" id="setup">
+    <h2 style="margin-top:0">Connect to your friend</h2>
+    <p class="small">This prototype uses Supabase Realtime. Create a Supabase project first, then paste its project URL and publishable/anon key below. These are client-side credentials; never paste a service-role key here.</p>
+    <div class="row">
+      <div class="field"><label for="url">Supabase Project URL</label><input id="url" placeholder="https://your-project.supabase.co" autocomplete="url"></div>
+      <div class="field"><label for="key">Supabase publishable key (or legacy anon key)</label><input id="key" placeholder="sb_publishable_..." autocomplete="off"></div>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <div class="field"><label for="room">Room code</label><input id="room" maxlength="16" placeholder="e.g. GLINGO7" value="GLINGO7"></div>
+      <button class="primary" id="connect">Connect / Join room</button>
+      <button id="disconnect" disabled>Disconnect</button>
+    </div>
+    <div id="status">Not connected yet.</div>
+  </section>
+
+  <section class="panel">
+    <div class="hud"><span class="score en">En: <span id="score1">0</span></span><span id="roundStatus">Waiting for players</span><span class="score um">Um: <span id="score2">0</span></span></div>
+    <div id="arenaWrap"><canvas id="game" width="800" height="480" aria-label="Glingos Battle arena"></canvas></div>
+    <p class="small">Move with <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>. Aim with your mouse and click to fire an energy orb. Both players use WASD on their own computers.</p>
+    <div class="controls">
+      <div><strong class="en">Player 1 — En</strong><p class="small">Green Glingo. First player to join the room.</p></div>
+      <div><strong class="um">Player 2 — Um</strong><p class="small">Red Glingo. Second player to join the room.</p></div>
+    </div>
+    <div class="row" style="margin-top:12px"><button id="reset" disabled>Reset match</button><span class="small">If the connection drops, reconnect with the same room code.</span></div>
+  </section>
+  <section class="panel">
+    <details><summary>Setup guide</summary>
+      <ol>
+        <li>Create a project at <a href="https://supabase.com/dashboard" target="_blank" rel="noreferrer">Supabase Dashboard</a>.</li>
+        <li>Open Project Settings → API (or Data API / API Keys, depending on the dashboard version). Copy the Project URL and the publishable key, or legacy anon key. Do not use the service-role/secret key.</li>
+        <li>Paste both values above. Choose a room code and click Connect / Join room.</li>
+        <li>Your friend opens the same published website, enters the same Supabase values and room code, then clicks Connect. First person is En; second is Um.</li>
+        <li>To publish: upload <code>index.html</code>, <code>en.png</code> and <code>um.png</code> to your GitHub repository. Open Settings → Pages, select Deploy from a branch, choose <code>main</code> and <code>/(root)</code>, then Save.</li>
+      </ol>
+      <p class="small">Prototype note: this is a learning build using client-side realtime messages, not a cheat-resistant competitive server. A production version should use server-authoritative game rules.</p>
+    </details>
+  </section>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+(() => {
+const canvas=document.getElementById('game'), ctx=canvas.getContext('2d');
+ctx.imageSmoothingEnabled=false;
+const $=id=>document.getElementById(id);
+const sprites={en:new Image(),um:new Image()};
+sprites.en.src='./en.png'; sprites.um.src='./um.png';
+const W=800,H=480, R=18;
+let supabase=null, channel=null, player=0, connected=false, room='', lastSend=0, presenceKey='';
+let local={x:130,y:240,angle:0,hp:0}, remote={x:670,y:240,angle:Math.PI,seen:false};
+let bullets=[], scores=[0,0], keys={}, mouse={x:400,y:240}, lastShot=0, roundText='Connect to begin', lastState=0;
+const setStatus=(t,err=false)=>{$('status').textContent=t;$('status').className=err?'error':''};
+function drawGlingo(who,x,y,angle){
+ const im=sprites[who];
+ ctx.save();ctx.translate(x,y);ctx.rotate(angle);
+ ctx.fillStyle='rgba(0,0,0,.28)';ctx.beginPath();ctx.ellipse(0,15,17,7,0,0,Math.PI*2);ctx.fill();
+ if(im.complete&&im.naturalWidth){ctx.drawImage(im,-24,-24,48,48);}
+ else {ctx.fillStyle=who==='en'?'#16a34a':'#e11d48';ctx.beginPath();ctx.arc(0,0,17,0,Math.PI*2);ctx.fill();}
+ ctx.restore();
+}
+function draw(){
+ ctx.clearRect(0,0,W,H);
+ ctx.fillStyle='#18312e';ctx.fillRect(0,0,W,H);
+ ctx.strokeStyle='rgba(180,235,206,.08)';ctx.lineWidth=1;
+ for(let x=0;x<W;x+=32){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke()}
+ for(let y=0;y<H;y+=32){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke()}
+ ctx.strokeStyle='#52766b';ctx.lineWidth=4;ctx.strokeRect(8,8,W-16,H-16);
+ for(const [x,y] of [[260,125],[540,125],[260,355],[540,355]]){ctx.fillStyle='#315449';ctx.beginPath();ctx.arc(x,y,24,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#6e9b81';ctx.lineWidth=2;ctx.stroke()}
+ bullets.forEach(b=>{ctx.fillStyle=b.owner===1?'#8effa8':'#ff7c91';ctx.shadowColor=ctx.fillStyle;ctx.shadowBlur=12;ctx.beginPath();ctx.arc(b.x,b.y,6,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0});
+ drawGlingo('en',player===1?local.x:remote.x,player===1?local.y:remote.y,player===1?local.angle:remote.angle);
+ drawGlingo('um',player===2?local.x:remote.x,player===2?local.y:remote.y,player===2?local.angle:remote.angle);
+}
+function updateHud(){
+ $('score1').textContent=scores[0];$('score2').textContent=scores[1];$('roundStatus').textContent=roundText;
+}
+function broadcast(type,payload){if(channel&&connected)channel.send({type:'broadcast',event:type,payload});}
+function spawnShot(){
+ const now=performance.now();if(now-lastShot<450||!connected||player===0)return;lastShot=now;
+ const b={id:Math.random().toString(36).slice(2),owner:player,x:local.x+Math.cos(local.angle)*25,y:local.y+Math.sin(local.angle)*25,vx:Math.cos(local.angle)*5.5,vy:Math.sin(local.angle)*5.5,life:110};
+ bullets.push(b);broadcast('shot',b);
+}
+function award(point){
+ if(!connected||player===0)return;
+ scores[point-1]++;broadcast('score',{scores,by:player});
+ if(scores[point-1]>=5){roundText=(point===1?'En':'Um')+' wins!';broadcast('winner',{text:roundText,scores});}
+ else roundText=(point===1?'En':'Um')+' scores!';
+ updateHud();
+}
+function frame(t){
+ const dt=Math.min(2,(t-(lastState||t))/16.67);lastState=t;
+ if(connected&&player){
+  let dx=0,dy=0;if(keys.w||keys.W)dy--;if(keys.s||keys.S)dy++;if(keys.a||keys.A)dx--;if(keys.d||keys.D)dx++;
+  if(dx||dy){const l=Math.hypot(dx,dy);local.x+=dx/l*3.2*dt;local.y+=dy/l*3.2*dt;}
+  local.x=Math.max(32,Math.min(W-32,local.x));local.y=Math.max(32,Math.min(H-32,local.y));
+  local.angle=Math.atan2(mouse.y-local.y,mouse.x-local.x);
+  if(t-lastSend>45){broadcast('state',{player,x:local.x,y:local.y,angle:local.angle,ts:Date.now()});lastSend=t;}
+  bullets=bullets.filter(b=>{
+   b.x+=b.vx*dt;b.y+=b.vy*dt;b.life-=dt;
+   if(b.owner===player && remote.seen && Math.hypot(b.x-remote.x,b.y-remote.y)<23){award(player);return false;}
+   return b.life>0&&b.x>0&&b.x<W&&b.y>0&&b.y<H;
+  });
+ }
+ draw();requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+canvas.addEventListener('mousemove',e=>{const r=canvas.getBoundingClientRect();mouse.x=(e.clientX-r.left)*W/r.width;mouse.y=(e.clientY-r.top)*H/r.height;});
+canvas.addEventListener('click',spawnShot);
+window.addEventListener('keydown',e=>{if(['w','a','s','d','W','A','S','D'].includes(e.key)){keys[e.key]=true;e.preventDefault();}});
+window.addEventListener('keyup',e=>{keys[e.key]=false;});
+window.addEventListener('blur',()=>keys={});
+$('connect').onclick=async()=>{
+ if(connected)return;
+ const url=$('url').value.trim(),key=$('key').value.trim();room=$('room').value.trim().toUpperCase();
+ if(!url||!key||!room){setStatus('Please enter your Supabase URL, publishable/anon key and a room code.',true);return;}
+ if(!window.supabase){setStatus('Supabase library did not load. Check your internet connection and reload.',true);return;}
+ try{
+  supabase=window.supabase.createClient(url,key);
+  presenceKey=Math.random().toString(36).slice(2);\n  channel=supabase.channel('glingos-'+room,{config:{broadcast:{self:false},presence:{key:presenceKey}}});
+  channel.on('broadcast',{event:'hello'},()=>{
+   if(player)broadcast('state',{player,x:local.x,y:local.y,angle:local.angle,ts:Date.now()});
+  });
+  channel.on('presence',{event:'sync'},()=>{
+   if(!connected)return;
+   const members=[];
+   Object.entries(channel.presenceState()).forEach(([k,metas])=>metas.forEach(meta=>members.push({key:k,...meta})));
+   members.sort((a,b)=>(a.joinedAt||0)-(b.joinedAt||0)||a.key.localeCompare(b.key));
+   const slot=members.findIndex(m=>m.key===presenceKey)+1;
+   if(slot>2){player=0;setStatus('This room already has two players. Try another room code.',true);return;}
+   if(slot>0){
+    player=slot;
+    local={x:player===1?130:670,y:240,angle:player===1?0:Math.PI};
+    remote={x:player===1?670:130,y:240,angle:player===1?Math.PI:0,seen:false};
+    setStatus('Connected to room '+room+' as '+(player===1?'En (Player 1)':'Um (Player 2)')+'.');
+    broadcast('state',{player,x:local.x,y:local.y,angle:local.angle,ts:Date.now()});
+   }
+  });
+  channel.on('broadcast',{event:'state'},({payload:p})=>{
+   if(!p||p.player===player)return;
+   if(player===0){player=2;local={x:670,y:240,angle:Math.PI};}
+   remote={x:p.x,y:p.y,angle:p.angle,seen:true};
+   if(player===1&&p.player===2)roundText='Both Glingos connected — battle!';
+   updateHud();
+  });
+  channel.on('broadcast',{event:'shot'},({payload:b})=>{if(b&&b.owner!==player)bullets.push({...b});});
+  channel.on('broadcast',{event:'score'},({payload:p})=>{if(p&&Array.isArray(p.scores)){scores=p.scores;updateHud();}});
+  channel.on('broadcast',{event:'winner'},({payload:p})=>{if(p){roundText=p.text;scores=p.scores||scores;updateHud();}});
+  channel.on('broadcast',{event:'reset'},()=>{scores=[0,0];bullets=[];roundText='Match reset';updateHud();});
+  channel.subscribe(async status=>{
+   if(status==='SUBSCRIBED'){
+    connected=true;player=0;
+    $('connect').disabled=true;$('disconnect').disabled=false;$('reset').disabled=false;
+    roundText='Assigning player slot…';setStatus('Connected to the room; checking which player slot is free.');
+    await channel.track({joinedAt:Date.now()});
+    broadcast('hello',{room});
+    updateHud();
+   }
+   if(status==='CHANNEL_ERROR'||status==='TIMED_OUT'){setStatus('Could not connect. Check the URL/key and Supabase Realtime settings.',true);}
+  });
+ }catch(e){setStatus('Connection error: '+e.message,true);}
+};
+$('disconnect').onclick=async()=>{connected=false;player=0;if(channel&&supabase)await supabase.removeChannel(channel);channel=null;$('connect').disabled=false;$('disconnect').disabled=true;$('reset').disabled=true;setStatus('Disconnected.');roundText='Waiting for players';updateHud();};
+$('reset').onclick=()=>{scores=[0,0];bullets=[];roundText='New match — first to five';local.x=player===1?130:670;local.y=240;broadcast('reset',{});updateHud();};
+})();
+</script>
+</body>
+</html>
